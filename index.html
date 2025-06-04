@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>littleapps To-Do List</title>
+    <title>My Enhanced To-Do List</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
@@ -168,9 +168,10 @@
     <button id="themeToggle" class="absolute top-4 right-4 p-3 bg-white/80 backdrop-blur-md shadow-lg rounded-lg text-gray-800 theme-toggle-button">
         <i class="fas fa-moon"></i> </button>
 
+    <!-- Wrapper for main content -->
     <div class="main-content-wrapper">
         <div class="bg-white shadow-2xl rounded-xl p-6 md:p-8 w-full max-w-lg transform transition-all duration-500 ease-in-out">
-            <h1 class="text-3xl md:text-4xl font-bold text-center text-indigo-600 mb-6">littleapps To-Do List</h1>
+            <h1 class="text-3xl md:text-4xl font-bold text-center text-indigo-600 mb-6">My To-Do List</h1>
 
             <div class="flex mb-6">
                 <input type="text" id="taskInput" class="flex-grow p-3 border border-gray-300 rounded-l-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-shadow" placeholder="Add a new task...">
@@ -203,7 +204,16 @@
         import { getFirestore, doc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, serverTimestamp, writeBatch, where, orderBy as firestoreOrderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Firebase Configuration & Initialization ---
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+        let parsedFirebaseConfig;
+        try {
+            // Check if __firebase_config is defined and is a non-empty string before parsing
+            parsedFirebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config && __firebase_config.trim() !== '' ? JSON.parse(__firebase_config) : null;
+        } catch (e) {
+            console.error("Error parsing __firebase_config:", e);
+            parsedFirebaseConfig = null; // Ensure fallback if parsing fails
+        }
+
+        const firebaseConfig = parsedFirebaseConfig || {
             apiKey: "YOUR_API_KEY",
             authDomain: "YOUR_AUTH_DOMAIN",
             projectId: "YOUR_PROJECT_ID",
@@ -211,7 +221,8 @@
             messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
             appId: "YOUR_APP_ID"
         };
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-todo-app-v2'; // Updated app ID for new data structure if needed
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-todo-app-v2'; 
 
         let app;
         let db;
@@ -253,7 +264,7 @@
                 messageBoxButton.onclick = null;
             }
             messageBox.classList.add('show');
-            if (duration !== Infinity) {
+            if (duration !== Infinity) { // Allows for persistent messages if duration is Infinity
                 messageBoxTimeout = setTimeout(hideMessage, duration);
             }
         }
@@ -307,7 +318,7 @@
             const task = taskDoc.data();
             const taskId = taskDoc.id;
 
-            if (task.isDeleted) return null; // Should be filtered by query, but good safeguard
+            if (task.isDeleted) return null; 
 
             const li = document.createElement('li');
             li.dataset.id = taskId;
@@ -340,14 +351,7 @@
             actionsDiv.appendChild(deleteBtn);
             li.appendChild(taskTextSpan);
             li.appendChild(actionsDiv);
-
-            // Apply 'adding' animation class, it will be appended in loadTasks based on sorted order
             li.classList.add('adding');
-            
-            // The element will be appended to taskListUl in the loadTasks function
-            // after sorting, so we don't append it here directly.
-            // setTimeout is also handled there.
-
             return li;
         }
 
@@ -363,6 +367,11 @@
 
         // --- Firestore CRUD Operations ---
         async function addTask() {
+            // Check if Firebase is configured before allowing add
+            if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.projectId) {
+                showMessage("Firebase not configured. Cannot add task.", 3000);
+                return;
+            }
             const taskText = taskInput.value.trim();
             if (taskText === "" || !currentUserId) {
                 showMessage("Task cannot be empty!", 2000);
@@ -431,6 +440,29 @@
 
         // --- Firebase Initialization and Auth ---
         async function initializeFirebase() {
+            // Check if the Firebase config is using placeholder values or is missing crucial parts
+            if (firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.projectId) {
+                console.error("Firebase configuration is missing or uses placeholder values. Please provide a valid Firebase config. App will run in offline mode without cloud sync.");
+                userIdDisplay.textContent = "config error";
+                // Show a persistent message to the user
+                showMessage("Firebase not configured. Please set up your Firebase project and update the configuration. Task functionality will be disabled.", Infinity);
+                
+                // Disable UI elements that depend on Firebase
+                if(addTaskBtn) addTaskBtn.disabled = true;
+                if(taskInput) taskInput.disabled = true;
+                if(taskInput) taskInput.placeholder = "Firebase not configured";
+                
+                // Update noTasksMessage to reflect the configuration issue
+                if(noTasksMessage) {
+                    noTasksMessage.textContent = "Firebase not configured. Tasks cannot be saved or loaded.";
+                    noTasksMessage.classList.remove('hidden');
+                }
+                if(document.getElementById('taskListContainer')) {
+                     document.getElementById('taskListContainer').innerHTML = ''; // Clear any potential stale tasks
+                }
+                return; // Stop further Firebase initialization
+            }
+
             try {
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
@@ -450,10 +482,14 @@
                             signInWithCustomToken(auth, __initial_auth_token)
                                 .catch(err => {
                                     console.error("Custom token sign-in failed, trying anonymous:", err);
-                                    signInAnonymously(auth).catch(e => console.error("Anon sign-in failed:", e))
+                                    signInAnonymously(auth).catch(e => {
+                                        console.error("Anonymous sign-in failed after custom token failure:", e);
+                                        userIdDisplay.textContent = "auth failed";
+                                        showMessage("Authentication failed. Tasks cannot be saved.", 5000);
+                                    });
                                  });
                         } else {
-                            signInAnonymously(auth).catch(e => {
+                            signInAnonymously(auth).catch(e => { // This is where the original error occurred
                                 console.error("Anonymous sign-in failed:", e);
                                 userIdDisplay.textContent = "auth failed";
                                 showMessage("Authentication failed. Tasks cannot be saved.", 5000);
@@ -481,7 +517,6 @@
                 unsubscribeTasks();
             }
 
-            // Query for non-deleted tasks. Sorting will be done client-side.
             const q = query(tasksCollectionRef, where("isDeleted", "==", false));
             console.log("Setting up new task listener for user:", currentUserId);
 
@@ -492,12 +527,10 @@
                     tasksData.push({ id: docSnap.id, ...docSnap.data() });
                 });
 
-                // Client-side sorting: newest first
-                // Ensure createdAt exists and is a Timestamp object for proper comparison
                 tasksData.sort((a, b) => {
                     const timeA = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().getTime() : 0;
                     const timeB = b.createdAt && b.createdAt.toDate ? b.createdAt.toDate().getTime() : 0;
-                    return timeB - timeA; // Descending order
+                    return timeB - timeA; 
                 });
                 
                 const existingTaskElements = new Map();
@@ -507,7 +540,6 @@
 
                 const newOrderIds = tasksData.map(task => task.id);
                 
-                // Remove tasks from UI that are no longer in the (filtered and sorted) list
                 existingTaskElements.forEach((liElement, taskId) => {
                     if (!newOrderIds.includes(taskId)) {
                         liElement.classList.add('removing');
@@ -515,17 +547,14 @@
                     }
                 });
 
-                // Add or update tasks in the correct order
                 newOrderIds.forEach((taskId, index) => {
                     const taskDataItem = tasksData.find(t => t.id === taskId);
                     let taskElement = taskListUl.querySelector(`li[data-id="${taskId}"]`);
 
-                    if (taskElement) { // Task exists, update its content and position
-                        const taskData = taskDataItem; // Already have the full data object
-                        // Update text
+                    if (taskElement) { 
+                        const taskData = taskDataItem; 
                         const textSpan = taskElement.querySelector('span');
                         if (textSpan.textContent !== taskData.text) textSpan.textContent = taskData.text;
-                        // Update completed state
                         if (taskData.completed && !taskElement.classList.contains('completed')) {
                             taskElement.classList.add('completed');
                         } else if (!taskData.completed && taskElement.classList.contains('completed')) {
@@ -535,25 +564,22 @@
                         completeBtn.innerHTML = taskData.completed ? '<i class="fas fa-undo"></i>' : '<i class="fas fa-check"></i>';
                         completeBtn.title = taskData.completed ? "Mark as Incomplete" : "Mark as Complete";
 
-                        // Ensure correct order
                         if (taskListUl.children[index] !== taskElement) {
                             taskListUl.insertBefore(taskElement, taskListUl.children[index]);
                         }
 
-                    } else { // New task, render and insert at correct position
-                        // Create a temporary doc-like object for renderTask
+                    } else { 
                         const pseudoDoc = {
                             id: taskId,
                             data: () => taskDataItem
                         };
                         const newLi = renderTask(pseudoDoc);
-                        if (newLi) { // renderTask might return null if task.isDeleted (though filtered)
+                        if (newLi) { 
                            if (taskListUl.children[index]) {
                                 taskListUl.insertBefore(newLi, taskListUl.children[index]);
                            } else {
                                 taskListUl.appendChild(newLi);
                            }
-                           // Trigger animation
                            setTimeout(() => {
                                newLi.classList.remove('adding');
                            }, 50);
@@ -581,8 +607,14 @@
         updateClock();
         setInterval(updateClock, 1000);
         loadTheme(); 
-        initializeFirebase();
-        window.addEventListener('load', () => updateNoTasksMessage());
+        initializeFirebase(); // This will now check config before proceeding
+        window.addEventListener('load', () => {
+            // updateNoTasksMessage might be called before Firebase check completes,
+            // so ensure it's also handled by the Firebase config check if it fails.
+            if (!(firebaseConfig.apiKey === "YOUR_API_KEY" || !firebaseConfig.projectId)) {
+                 updateNoTasksMessage();
+            }
+        });
 
     </script>
 </body>
